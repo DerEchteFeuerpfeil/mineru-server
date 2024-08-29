@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import os
 import queue
 import threading
@@ -7,19 +8,19 @@ import time
 from typing import Optional
 
 import uvicorn
-from aiohttp.web_fileresponse import FileResponse
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, Form, Query, HTTPException
-from pydantic import BaseModel
+from api.v1.download_models import download_models
+from api.v1.logger_config import setup_logging
+from api.v1.services.Pdf2MD import processPdf2MD
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from SQLiteManager import SQLiteORM
 from starlette.middleware.cors import CORSMiddleware
 from starlette.status import HTTP_404_NOT_FOUND
 
-import Pdf2MD
-from SQLiteManager import SQLiteORM
+setup_logging(is_debug_mode=False)
+log = logging.getLogger()
 
-# 数据库文件路径
-db_file = 'minerU-server.db'
+db_file = "minerU-server.db"
 
-# 创建表的SQL语句
 sql_create_users_table = """
 CREATE TABLE IF NOT EXISTS file_task (
     task_id TEXT PRIMARY KEY,
@@ -29,143 +30,161 @@ CREATE TABLE IF NOT EXISTS file_task (
 );
 """
 
-# 实例化 SQLiteManager
-db = SQLiteORM(db_file)
 
-# 创建表
-db.create_table(sql_create_users_table)
-db.close()
+def initialize_database():
+    db = SQLiteORM(db_file)
+    db.create_table(sql_create_users_table)
+    db.close()
+
+
+initialize_database()
 
 current_script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 app = FastAPI()
 origins = ["*"]
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 设置允许的origins来源
-    allow_credentials=True,
-    allow_methods=["*"],  # 设置允许跨域的http方法，比如 get、post、put等。
-    allow_headers=["*"])  # 允许跨域的headers，可以用来鉴别来源等作用。
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"]
+)
 
 
 @app.post("/upload")
 async def handle(background_task: BackgroundTasks, file: UploadFile = File(...), user_name: Optional[str] = Form(...)):
     try:
-        doc_id = hashlib.md5((file.filename + user_name).encode('utf-8')).hexdigest()
-        # 文件保存路径
+        log.info(f"Received upload request: {file.filename} from user {user_name}")
+        doc_id = hashlib.md5((file.filename + user_name).encode("utf-8")).hexdigest()
+
         file_path = os.path.join(current_script_dir, f"{doc_id}")
         if not os.path.exists(file_path):
             os.makedirs(file_path)
         md_file_path = file_path
-        file_path = os.path.join(file_path, f"{file.filename}")  # 假设保存为文本文件
-        # 保存文件
-        # 重置文件指针到开头，以便可以读取文件并保存
+        file_path = os.path.join(file_path, f"{file.filename}")
+
         await file.seek(0)
-        # 保存文件
         with open(file_path, "wb") as f:
-            while chunk := await file.read(1024):  # 读取文件块
+            while chunk := await file.read(1024):
                 f.write(chunk)
+        log.info(f"File saved at: {file_path}")
+
         dbM = SQLiteORM(db_file)
-        dbM.create("file_task",
-                  {"task_id": doc_id, "file_path": file_path, "md_file_path": md_file_path, "status": "waiting"})
-        dbM.close()
-        return {"message": "success", 'task_id': doc_id, 'filename': file.filename}
+        try:
+            dbM.create(
+                "file_task",
+                {"task_id": doc_id, "file_path": file_path, "md_file_path": md_file_path, "status": "waiting"},
+            )
+        finally:
+            dbM.close()
+
+        return {"message": "success", "task_id": doc_id, "filename": file.filename}
     except Exception as e:
-        print(e)
-        return {"message": str(e), 'task_id': None, 'filename': file.filename}
+        log.error(f"Error during file upload: {e}")
+        return {"message": str(e), "task_id": None, "filename": file.filename}
+
 
 @app.get("/download/{task_id}")
 async def download_file(task_id: str):
-    # 查询数据库以获取文件路径
-    db = SQLiteORM(db_file)
-    result = db.read("file_task", {"task_id": task_id})
-    db.close()
+    max_retries = 5  # Maximum number of retries before giving up
+    retry_delay = 2  # Delay between retries in seconds
 
-    if not result:
-        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Task ID not found")
+    try:
+        db = SQLiteORM(db_file)
+        try:
+            result = db.read("file_task", {"task_id": task_id})
+        finally:
+            db.close()
 
+        if not result:
+            log.warning(f"Task ID {task_id} not found")
+            raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Task ID not found")
 
-    status = result[0][3]
-    if status == "success":
-        md_file_path = result[0][2]  # 假设 file_path 是查询结果的第三个元素
-        file_path = result[0][1]  # 假设 file_path 是查询结果的第二个元素
+        status = result[0][3]
+        md_file_path = result[0][2]
+        file_path = result[0][1]
         filename = os.path.basename(file_path)
-        dest_name = os.path.splitext(filename)[0]  # 移除扩展名
+        dest_name = os.path.splitext(filename)[0]
 
-        # 拼接新的文件路径
         new_md_file_path = os.path.join(md_file_path, f"{dest_name}.md")
-        # 读取文件并转换为 base64
-        with open(new_md_file_path, "rb") as file:
-            file_data = file.read()
-            base64_data = base64.b64encode(file_data).decode('utf-8')  # 转换为 base64 并解码为字符串
 
-        # 返回 base64 编码的文件数据
-        return {"message": "success", 'task_id': task_id, 'filename': result[0][1], "data": base64_data}
+        if status == "waiting" or status == "processing":
+            log.info(f"Task {task_id} is still being processed")
+            return {"message": status, "task_id": task_id, "filename": result[0][1]}
 
-    elif status == "processing":
-        return {"message": "processing", 'task_id': task_id, 'filename': result[0][1]}
+        if status == "success":
+            for attempt in range(max_retries):
+                if os.path.exists(new_md_file_path):
+                    with open(new_md_file_path, "rb") as file:
+                        file_data = file.read()
+                        base64_data = base64.b64encode(file_data).decode("utf-8")
+                    log.info(f"File successfully processed and ready for download: {new_md_file_path}")
+                    return {"message": "success", "task_id": task_id, "filename": result[0][1], "data": base64_data}
+                else:
+                    log.info(f"File not found, retrying {attempt + 1}/{max_retries}...")
+                    time.sleep(retry_delay)
 
-    elif status == "waiting":
-        return {"message": "waiting", 'task_id': task_id, 'filename': result[0][1]}
+            log.error(f"File not found after {max_retries} retries: {new_md_file_path}")
+            raise HTTPException(status_code=500, detail="File not found after processing")
 
-    else:
-        return {"message": "error", 'task_id': task_id, 'filename': result[0][1]}
+        if status == "error":
+            log.error(f"Task {task_id} encountered an error during processing")
+            raise HTTPException(status_code=500, detail="Error occurred during file processing")
+
+    except Exception as e:
+        log.error(f"Error during file download: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-class AddLink(BaseModel):
-    link: str
-
-
-
-# 定义一个队列
-q = queue.Queue(maxsize=20)  # 可选参数 maxsize 设置队列的最大长度
+q = queue.Queue(maxsize=20)
 
 
 def producer():
-    dbP = SQLiteORM(db_file)
     while True:
-        waitingList = dbP.read("file_task", {"status": "waiting"})
-        for waiting in waitingList:
-            q.put(waiting)
-            dbP.update("file_task", {"status": "processing"}, {"task_id": waiting[0]})
-        time.sleep(5)  # 模拟生产数据的时间
+        try:
+            dbP = SQLiteORM(db_file)
+            waitingList = dbP.read("file_task", {"status": "waiting"})
+            for waiting in waitingList:
+                q.put(waiting)
+                dbP.update("file_task", {"status": "processing"}, {"task_id": waiting[0]})
+        except Exception as e:
+            log.error(f"Producer encountered an error: {e}")
+        finally:
+            dbP.close()
+        time.sleep(5)
 
 
 def consumer():
-    dbC = SQLiteORM(db_file)
     while True:
-        item = q.get()  # 当队列为空时，get() 方法会阻塞直到有数据可用
-        print('Consumer 消费了', item)
+        item = q.get()
         try:
-            # 处理PDF转换任务
-            Pdf2MD.processPdf2MD(item)
-            # 获取文件名并移除扩展名
-            filename = os.path.basename(item[1])
-            dest_name, extension = os.path.splitext(filename)
-
-            # 拼接完整文件路径
-            base_dir = os.path.dirname(item[1])  # 获取item[1]的目录
-            full_path = os.path.join(base_dir, dest_name, 'auto')  # 拼接完整路径
-            dbC.update("file_task", {"status": "success", "md_file_path": full_path}, {"task_id": item[0]})
+            log.info(f"Processing task {item[0]} from queue")
+            success = processPdf2MD(item)
+            dbC = SQLiteORM(db_file)
+            if success:
+                filename = os.path.basename(item[1])
+                dest_name, _ = os.path.splitext(filename)
+                base_dir = os.path.dirname(item[1])
+                full_path = os.path.join(base_dir, dest_name, "auto")
+                dbC.update("file_task", {"status": "success", "md_file_path": full_path}, {"task_id": item[0]})
+                log.info(f"Task {item[0]} completed successfully")
+            else:
+                dbC.update("file_task", {"status": "error"}, {"task_id": item[0]})
+                log.error(f"Task {item[0]} failed due to an error")
         except Exception as e:
-            # 处理异常
-            dbC.update("file_task", {"status": "error"}, {"task_id": item[0]})
-            print(f"An error occurred while processing PDF to MD: {e}")
-
-        q.task_done()  # 通知队列此任务已完成
-        time.sleep(1)  # 模拟消费数据的时间
+            log.error(f"Consumer encountered an error processing task {item[0]}: {e}")
+        finally:
+            dbC.close()
+            q.task_done()
+        time.sleep(1)
 
 
 @app.on_event("startup")
 async def startup_event():
-    # 创建生产者线程
+    download_models()
     producer_thread = threading.Thread(target=producer, daemon=True)
     producer_thread.start()
 
-    # 创建消费者线程
     consumer_thread = threading.Thread(target=consumer, daemon=True)
     consumer_thread.start()
 
 
-if __name__ == '__main__':
-    uvicorn.run('main:app', host="0.0.0.0", reload=True)
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", reload=True)
