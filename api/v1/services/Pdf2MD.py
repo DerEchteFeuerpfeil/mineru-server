@@ -1,33 +1,49 @@
+import logging
 import os
-import json
 import subprocess
 
 import torch
-from loguru import logger
 
-from magic_pdf.pipe.UNIPipe import UNIPipe
-from magic_pdf.rw.DiskReaderWriter import DiskReaderWriter
-
-import magic_pdf.model as model_config
-model_config.__use_inside_model__ = True
-
+log = logging.getLogger("__main__." + __name__)
 
 
 def remove_extension(filename):
-    # 使用 os.path.splitext() 分离文件名和扩展名
-    base_name, extension = os.path.splitext(filename)
-    return base_name
+    return os.path.splitext(filename)[0]
+
+
 def processPdf2MD(item):
-
-    # 构建命令   python -m graphrag.index --init --root ./ragtest
     cmd = ["magic-pdf", "-p", item[1], "-o", item[2]]
-    # 运行命令
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        error_message = f"An error occurred: {e.stderr}"
-        print(error_message)
+        log.info(f"Running command: {cmd}")
 
+        # Start the process and log output in real-time
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Log output line by line
+        for stdout_line in iter(process.stdout.readline, ""):
+            log.info(stdout_line.strip())
+
+        for stderr_line in iter(process.stderr.readline, ""):
+            log.warning(stderr_line.strip())
+
+        process.stdout.close()
+        process.stderr.close()
+
+        return_code = process.wait()
+
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd)
+
+        log.info(f"Successfully processed PDF for task {item[0]}")
+
+        # Clear GPU cache to free up memory
+        torch.cuda.empty_cache()
+
+        return True  # Indicate success
+
+    except subprocess.CalledProcessError as e:
+        log.error(f"Error processing task {item[0]}: {e.stderr}")
+        return False  # Indicate failure
 
     # current_script_dir = os.path.dirname(os.path.abspath(__file__))
     # dest_dir = item[2]
@@ -52,6 +68,3 @@ def processPdf2MD(item):
     #
     # with open(output_md_path, "w", encoding="utf-8") as f:
     #     f.write(md_content)
-
-
-
