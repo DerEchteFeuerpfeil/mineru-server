@@ -13,6 +13,7 @@ MinerU Server is a microservice designed for processing PDFs using the [magic-pd
 
 - **Docker**: Ensure Docker is installed on your system.
 - **Git LFS**: Git Large File Storage (LFS) is required for managing large model files.
+- Roughly 30GB of disk space (I know, lol)
 
 ## Installation
 
@@ -70,3 +71,4 @@ Ima be real with you, I do not intend to maintain this as an open-source project
 - more endpoints for the currently very limited API
 - tests
 - CPU build
+- optimize build size
