@@ -1,0 +1,79 @@
+# Use the official Ubuntu base image
+FROM ubuntu:22.04
+
+# Set environment variables to non-interactive to avoid prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update the package list and install necessary packages
+RUN apt-get update && \
+    apt-get install -y \
+        software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y \
+        python3.10 \
+        python3.10-venv \
+        python3.10-distutils \
+        python3-pip \
+        wget \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.10 as the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+# run everything non-root
+RUN groupadd -g 1234 mineru && \
+    useradd -m -u 1234 -g mineru mineru
+
+USER mineru
+
+RUN mkdir /home/mineru/app
+WORKDIR /home/mineru/app
+COPY --chown=mineru:mineru . /home/mineru/app/
+
+# Create a virtual environment for MinerU
+RUN python3 -m venv /home/mineru/mineru_venv
+
+# Activate the virtual environment and install necessary Python packages
+RUN /bin/bash -c "source /home/mineru/mineru_venv/bin/activate && \
+    pip3 install --upgrade pip"
+RUN /bin/bash -c "pip3 install -r requirements.txt"
+RUN /bin/bash -c "wget https://github.com/opendatalab/MinerU/raw/master/docker/global/requirements.txt -O requirements.txt && \
+    pip3 install -r requirements.txt --extra-index-url https://wheels.myhloli.com && \
+    pip3 install paddlepaddle-gpu==3.0.0b1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/"
+
+# Copy the configuration file template and install magic-pdf latest
+RUN /bin/bash -c "wget https://github.com/opendatalab/MinerU/raw/master/magic-pdf.template.json && \
+    cp magic-pdf.template.json /home/mineru/magic-pdf.json && \
+    source /home/mineru/mineru_venv/bin/activate && \
+    pip3 install -U magic-pdf"
+
+# Download models and update the configuration file
+RUN /bin/bash -c "pip3 install huggingface_hub && \
+    wget https://github.com/opendatalab/MinerU/raw/master/scripts/download_models_hf.py -O download_models.py && \
+    python3 download_models.py && \
+    sed -i 's|cpu|cuda|g' /home/mineru/magic-pdf.json"
+
+
+RUN mkdir -p /home/mineru/.paddleocr/whl/det/en/en_PP-OCRv3_det_infer && \
+    wget -O /home/mineru/.paddleocr/whl/det/en/en_PP-OCRv3_det_infer/en_PP-OCRv3_det_infer.tar \
+    https://paddleocr.bj.bcebos.com/PP-OCRv3/english/en_PP-OCRv3_det_infer.tar
+
+# also with https://paddleocr.bj.bcebos.com/PP-OCRv3/english/en_PP-OCRv3_rec_infer.tar
+RUN mkdir -p /home/mineru/.paddleocr/whl/rec/en/en_PP-OCRv3_rec_infer && \
+    wget -O /home/mineru/.paddleocr/whl/rec/en/en_PP-OCRv3_rec_infer/en_PP-OCRv3_rec_infer.tar \
+    https://paddleocr.bj.bcebos.com/PP-OCRv3/english/en_PP-OCRv3_rec_infer.tar
+
+# also with https://paddleocr.bj.bcebos.com/dygraph_v2.0/ch/ch_ppocr_mobile_v2.0_cls_infer.tar
+RUN mkdir -p /home/mineru/.paddleocr/whl/cls/ch/ch_ppocr_mobile_v2.0_cls_infer && \
+    wget -O /home/mineru/.paddleocr/whl/cls/ch/ch_ppocr_mobile_v2.0_cls_infer/ch_ppocr_mobile_v2.0_cls_infer.tar \
+    https://paddleocr.bj.bcebos.com/dygraph_v2.0/ch/ch_ppocr_mobile_v2.0_cls_infer.tar
+
+EXPOSE 8000
+
+# Set the entry point to activate the virtual environment and run the command line tool
+ENTRYPOINT ["/bin/bash", "-c", "source /home/mineru/mineru_venv/bin/activate && exec \"$@\"", "--"]
+# CMD ["/bin/bash", "-c", "source /opt/mineru_venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"]
