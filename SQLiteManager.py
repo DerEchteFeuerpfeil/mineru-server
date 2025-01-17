@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from sqlite3 import Error
+from typing import List, Dict
 
 
 class SQLiteORM:
@@ -28,7 +29,7 @@ class SQLiteORM:
             print(f"Error executing SQL: {e}")
             return False
 
-    def fetchall(self, sql, params=None):
+    def fetchall(self, sql, params=None) -> List:
         try:
             if params:
                 self.cursor.execute(sql, params)
@@ -46,6 +47,7 @@ class SQLiteORM:
         return self.execute(sql, tuple(data.values()))
 
     def read(self, table, conditions=None):
+        """returns task_id, file_path, md_file_path, status"""
         sql = f"SELECT * FROM {table}"
         if conditions:
             where_clause = self._build_where_clause(conditions)

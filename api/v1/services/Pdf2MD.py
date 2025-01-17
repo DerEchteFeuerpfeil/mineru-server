@@ -11,8 +11,11 @@ def remove_extension(filename):
     return os.path.splitext(filename)[0]
 
 
-def processPdf2MD(item):
-    cmd = ["magic-pdf", "-p", item[1], "-o", item[2]]
+def processPdf2MD(input_path:str, output_path:str):
+    """
+    NOTE: Currently this function is hard-coded for German texts
+    """
+    cmd = ["magic-pdf", "-p", input_path, "-o", output_path, "-m", "ocr", "-l", "german"]
     try:
         log.info(f"Running command: {cmd}")
 
@@ -34,15 +37,15 @@ def processPdf2MD(item):
         if return_code != 0:
             raise subprocess.CalledProcessError(return_code, cmd)
 
-        log.info(f"Successfully processed PDF for task {item[0]}")
+        log.info(f"Successfully processed PDF for task {input_path}")
 
         # Clear GPU cache to free up memory
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
         return True  # Indicate success
 
     except subprocess.CalledProcessError as e:
-        log.error(f"Error processing task {item[0]}: {e.stderr}")
+        log.error(f"Error processing task {input_path}: {e.stderr}")
         return False  # Indicate failure
 
     # current_script_dir = os.path.dirname(os.path.abspath(__file__))
