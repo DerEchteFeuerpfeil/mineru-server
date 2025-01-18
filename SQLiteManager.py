@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import sqlite3
 from sqlite3 import Error
@@ -57,13 +58,20 @@ class SQLiteORM:
         return self.fetchall(sql, params)
 
     def update(self, table, data, conditions):
+        # Add the updated_at field with the current timestamp
+        data['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Build the SET and WHERE clauses
         set_clause = self._build_set_clause(data)
         where_clause = self._build_where_clause(conditions)
         sql = f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
-        # 将字典视图转换为列表或元组
+
+        # Combine data and conditions into a single parameter tuple
         data_values = list(data.values())
         conditions_values = list(conditions.values())
         params = tuple(data_values + conditions_values)
+
+        # Execute the update query
         return self.execute(sql, params)
 
     def delete(self, table, conditions):

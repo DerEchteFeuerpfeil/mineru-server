@@ -29,10 +29,15 @@ RUN groupadd -g 1234 mineru && \
     useradd -m -u 1234 -g mineru mineru
 
 USER mineru
-
 RUN mkdir -p /home/mineru/app /home/mineru/mineru_venv
+
+USER root
+RUN /bin/bash -c "mkdir /home/mineru/app/data && chown 1234:1234 /home/mineru/app/data"
+
+USER mineru
 WORKDIR /home/mineru/app
 COPY --chown=mineru:mineru ./requirements.txt /home/mineru/app/requirements.txt
+
 
 # Create a virtual environment for MinerU
 RUN python3 -m venv /home/mineru/mineru_venv
