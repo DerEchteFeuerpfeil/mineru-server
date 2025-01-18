@@ -21,7 +21,9 @@ rapidocr-paddle
 rapidocr_onnxruntime
 rapid_table==0.3.0
 doclayout-yolo==0.0.2
-openai
+openai==1.59.8
+google-generativeai==0.8.3
+pdf2image
 aiohttp
 fastapi
 pydantic
