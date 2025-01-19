@@ -34,21 +34,27 @@ I have provided two separate Dockerfiles, one for deploying the application on a
 
 ### 3. Run the Docker Container
 
-Run the Docker container, exposing the necessary ports.
+Runs the Docker container, exposing the necessary ports and adds the LLM API key to the container. Make sure your environment from which you run this has the API key as an ENV var, look into the `run.sh` for more info.
 
 ```bash
-./run.sh dev
+./run.sh dev [openai|google|gemini]
 ```
 
 or 
 
 ```bash
-./run.sh gpu
+./run.sh gpu [openai|google|gemini]
 ```
 
 and inside the container (currently you get a bash instead of the server auto-starting) just do:
 ```bash
 python main.py
+```
+
+or 
+
+```bash
+./fastapi.sh
 ```
 
 ### 4. Access the API
