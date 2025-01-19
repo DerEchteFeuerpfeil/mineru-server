@@ -17,6 +17,7 @@ RUN apt-get update && \
         python3-pip \
         wget \
         git \
+        poppler-utils \
         libgl1 \
         libglib2.0-0 \
         && rm -rf /var/lib/apt/lists/*
