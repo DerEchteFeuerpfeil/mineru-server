@@ -124,12 +124,9 @@ def consumer():
 
             dbC = SQLiteORM(DB_FILE)
             if success:
-                print("searching: ", os.path.join(output_path, "**/*.md"))
-                print(glob(os.path.join(output_path, "**/*.md")))
-                print(os.listdir("/home/mineru/app/data/58bf9302837b749809289708125e2ff3/BSW_auszug/ocr"))
-                md_path = glob(os.path.join(output_path, "**/*.md"))[0]
+                md_path = glob(os.path.join(output_path, "**/*.md"), recursive=True)[0]
                 content_list_path = glob(
-                    os.path.join(output_path, "**/*content_list.json")
+                    os.path.join(output_path, "**/*content_list.json"), recursive=True
                 )[0]
 
                 dbC.update(
@@ -278,7 +275,9 @@ async def handle(
         existing_tasks = dbM.read("file_task", {"task_id": doc_id})
         if len(existing_tasks) > 0:
             LOG.info(f"Task ID {doc_id} already exists")
-            return {"message": "File already exists. Rename & re-upload if you want to process it again."}
+            return {
+                "message": "File already exists. Rename & re-upload if you want to process it again."
+            }
 
         file_path = os.path.join(current_script_dir, f"{doc_id}")
         if not os.path.exists(file_path):
